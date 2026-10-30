@@ -12,32 +12,60 @@ jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
 
+    # Load GitHub repository secrets
+    env:
+      EC2_HOST: ${{ secrets.EC2_HOST }}
+      EC2_USER: ${{ secrets.EC2_USER }}
+      EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+
     steps:
-      # Step 1: Checkout GitHub repository
+      # Step 1: Checkout repository
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # Step 2: Build Docker image
+      # Step 2: Validate EC2 secrets
+      - name: Validate EC2 Secrets
+        run: |
+          if [ -z "$EC2_HOST" ]; then
+            echo "ERROR: EC2_HOST is missing"
+            exit 1
+          fi
+
+          if [ -z "$EC2_USER" ]; then
+            echo "ERROR: EC2_USER is missing"
+            exit 1
+          fi
+
+          if [ -z "$EC2_SSH_KEY" ]; then
+            echo "ERROR: EC2_SSH_KEY is missing"
+            exit 1
+          fi
+
+          echo "All EC2 secrets are configured successfully"
+
+      # Step 3: Build Docker image
       - name: Build Docker Image
         run: |
           docker build \
             -t feane-project:${{ github.sha }} \
             ./feane-1.0.0
 
-      # Step 3: Deploy application to AWS EC2
+      # Step 4: Deploy to AWS EC2
       - name: Deploy to AWS EC2
         uses: appleboy/ssh-action@v1.2.0
         with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
+          host: ${{ env.EC2_HOST }}
+          username: ${{ env.EC2_USER }}
+          key: ${{ env.EC2_SSH_KEY }}
           script_stop: true
           script: |
             set -e
 
-            echo "Starting deployment..."
+            echo "Connected to AWS EC2"
+            hostname
+            whoami
 
-            # Clone repository if not available
+            # Clone or update repository
             if [ ! -d /opt/Feane_project/.git ]; then
               sudo git clone https://github.com/Swatik2003/Feane_project.git /opt/Feane_project
             else
@@ -45,24 +73,27 @@ jobs:
               sudo git -C /opt/Feane_project reset --hard origin/main
             fi
 
-            # Navigate to project directory
+            # Navigate to website directory
             cd /opt/Feane_project/feane-1.0.0
 
             # Build Docker image
-            sudo docker build -t feane-project:${{ github.sha }} .
+            sudo docker build -t feane-project:latest .
 
             # Remove old container
             sudo docker rm -f feane-container || true
 
-            # Start new container
+            # Start updated container
             sudo docker run -d \
               --name feane-container \
               --restart unless-stopped \
               -p 80:80 \
-              feane-project:${{ github.sha }}
+              feane-project:latest
 
-            echo "Deployment successful!"
-
-            # Verify container
+            # Verify deployment
+            echo "Checking Docker container..."
             sudo docker ps
+
+            echo "Checking website..."
             curl -f http://localhost
+
+            echo "Feane deployment completed successfully!"
