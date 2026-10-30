@@ -5,36 +5,64 @@ on:
   push:
     branches:
       - main
-  pull_request:
-    branches:
-      - main
+
+  workflow_dispatch:
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
+      # Step 1: Checkout GitHub repository
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Verify Docker
-        run: docker --version
-
+      # Step 2: Build Docker image
       - name: Build Docker Image
-        run: docker build -t feane-project:latest ./feane-1.0.0
+        run: |
+          docker build \
+            -t feane-project:${{ github.sha }} \
+            ./feane-1.0.0
 
-      - name: Configure AWS Credentials
-        if: github.event_name == 'push'
-        uses: aws-actions/configure-aws-credentials@v4
+      # Step 3: Deploy application to AWS EC2
+      - name: Deploy to AWS EC2
+        uses: appleboy/ssh-action@v1.2.0
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -e
 
-      - name: Verify AWS Identity
-        if: github.event_name == 'push'
-        run: aws sts get-caller-identity
+            echo "Starting deployment..."
 
-      - name: Deploy Static Site to S3
-        if: github.event_name == 'push'
-        run: aws s3 sync ./feane-1.0.0 s3://feane-project --delete
+            # Clone repository if not available
+            if [ ! -d /opt/Feane_project/.git ]; then
+              sudo git clone https://github.com/Swatik2003/Feane_project.git /opt/Feane_project
+            else
+              sudo git -C /opt/Feane_project fetch origin
+              sudo git -C /opt/Feane_project reset --hard origin/main
+            fi
+
+            # Navigate to project directory
+            cd /opt/Feane_project/feane-1.0.0
+
+            # Build Docker image
+            sudo docker build -t feane-project:${{ github.sha }} .
+
+            # Remove old container
+            sudo docker rm -f feane-container || true
+
+            # Start new container
+            sudo docker run -d \
+              --name feane-container \
+              --restart unless-stopped \
+              -p 80:80 \
+              feane-project:${{ github.sha }}
+
+            echo "Deployment successful!"
+
+            # Verify container
+            sudo docker ps
+            curl -f http://localhost
